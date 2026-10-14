@@ -1,61 +1,98 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import * as Location from 'expo-location';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
+import { LocationMap } from '@/components/location-map';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+// Coordenadas GPS actuales del dispositivo
+type Coords = {
+  latitude: number;
+  longitude: number;
+};
+
+// Estados posibles de la obtención de la ubicación
+type Status = 'loading' | 'denied' | 'error' | 'ready';
 
 export default function HomeScreen() {
+  // Estado general: carga, permiso denegado, error o éxito
+  const [status, setStatus] = useState<Status>('loading');
+  // Coordenadas obtenidas; el mapa solo se renderiza cuando existen
+  const [coords, setCoords] = useState<Coords | null>(null);
+  // Lugar legible obtenido por geocodificación inversa (ciudad, estado)
+  const [place, setPlace] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Paso 1: solicitar permiso de ubicación y obtener las coordenadas GPS
+    async function getLocation() {
+      try {
+        // Solicitar permiso en primer plano (muestra el diálogo del sistema)
+        const { status: permission } = await Location.requestForegroundPermissionsAsync();
+        if (permission !== 'granted') {
+          setStatus('denied');
+          return;
+        }
+
+        // Obtener la posición actual del dispositivo
+        const location = await Location.getCurrentPositionAsync({});
+        const { latitude, longitude } = location.coords;
+        setCoords({ latitude, longitude });
+
+        // Paso 3: geocodificación inversa (solo disponible en Android/iOS)
+        if (Platform.OS !== 'web') {
+          try {
+            const [address] = await Location.reverseGeocodeAsync({ latitude, longitude });
+            // Componer "ciudad, estado" con los datos reales devueltos por la API
+            const city = address?.city ?? address?.subregion ?? address?.district;
+            const region = address?.region;
+            const name = [city, region].filter(Boolean).join(', ');
+            setPlace(name || null);
+          } catch {
+            // Si falla el geocodificado se muestran las coordenadas en su lugar
+            setPlace(null);
+          }
+        }
+
+        setStatus('ready');
+      } catch {
+        // Cualquier error de ubicación no bloquea la aplicación
+        setStatus('error');
+      }
+    }
+
+    getLocation();
+  }, []);
+
+  // Paso 4: mensaje dinámico según el estado obtenido
+  const message =
+    status === 'loading'
+      ? 'Obteniendo tu ubicación…'
+      : status === 'denied'
+        ? 'Permiso de ubicación denegado. Actívalo para ver tu posición.'
+        : status === 'error'
+          ? 'No se pudo determinar tu ubicación.'
+          : place
+            ? `Estás en ${place}`
+            : `Lugar no disponible. Coordenadas: ${coords?.latitude.toFixed(5)}, ${coords?.longitude.toFixed(5)}`;
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
+        {/* Mensaje con el lugar detectado o el estado del proceso */}
+        <ThemedText type="subtitle" style={styles.message}>
+          {message}
         </ThemedText>
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        {/* Indicador de carga mientras se obtiene la ubicación */}
+        {status === 'loading' && (
+          <ActivityIndicator size="large" color="#2563eb" style={styles.spinner} />
+        )}
 
-        {Platform.OS === 'web' && <WebBadge />}
+        {/* Paso 2: mapa con marcador, solo cuando ya existen las coordenadas */}
+        {coords && <LocationMap latitude={coords.latitude} longitude={coords.longitude} />}
       </SafeAreaView>
     </ThemedView>
   );
@@ -66,33 +103,24 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     flexDirection: 'row',
+    // Fondo base de la paleta (src/global.css)
+    backgroundColor: '#f0f4fa',
   },
   safeArea: {
     flex: 1,
     paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
+    gap: Spacing.four,
     paddingBottom: BottomTabInset + Spacing.three,
     maxWidth: MaxContentWidth,
+    alignSelf: 'center',
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
+  message: {
     textAlign: 'center',
+    // Azul principal de la paleta para el mensaje de ubicación
+    color: '#2563eb',
   },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  spinner: {
+    marginTop: Spacing.two,
   },
 });
